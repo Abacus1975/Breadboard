@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Breadboard Simulator – Final Version</title>
+  <style>
+    :root{
+      --bg:#0f1115; --panel:#171a21; --text:#e6e6e6; --muted:#9aa3b2; --accent:#f59e0b; --ok:#22c55e; --err:#ef4444;
+      --railPlus:#ff0000; --railMinus:#0080ff;
+    }
+    html, body { height:100%; margin:0; background:var(--bg); color:var(--text); font-family: system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,"Noto Sans",sans-serif; }
+    .app { display:grid; grid-template-columns: 380px 1fr; gap:12px; height:100vh; box-sizing:border-box; padding:12px; }
+    .card { background:var(--panel); border-radius:14px; box-shadow: inset 0 0 0 1px #0008, 0 8px 20px #0006; }
+    .card h2 { margin:0; padding:12px 14px; border-bottom:1px solid #0006; font-size:16px; }
+    .card .content { padding:12px; font-size:14px; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+    button { background:#262b36; color:#fff; border:1px solid #0008; padding:8px 10px; border-radius:10px; cursor:pointer; transition: background-color 150ms ease; }
+    button:hover { background:#3a4150; }
+    button.active { background:var(--accent); color:#111; }
+    .file-ops button { background-color: #313847; }
+    input[type=range] { width:100% }
+    label { user-select:none }
+    svg { width:100%; height:100%; }
+    .board-card { height:80vh; min-height:580px }
+    .badge { display:inline-block; padding:2px 8px; border-radius:999px; background:#222936; border:1px solid #0008; margin-left:6px; font-size:12px; color:#bcd; }
+    .legend { display:flex; gap:8px; align-items:center; margin-top:6px; flex-wrap:wrap; }
+    .legend span { display:inline-block; width:16px; height:4px; background:#9ca3af; border-radius:2px; }
+    .legend .flow { background:#fbbf24; }
+    .kbd { font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; background:#263246; padding:2px 6px; border-radius:6px; border:1px solid #0008; }
+    .help ol { margin:8px 0 0 18px }
+    .help li { margin:4px 0 }
+    .hint { margin-top:8px; font-size:12px; color:#b3bfd4; min-height: 2.5em; }
+    #errorBox { display:none; margin:8px 0; padding:8px; background:#3a1d1d; border:1px solid #6a2a2a; color:#ffb7b7; border-radius:8px; white-space:pre-wrap }
+    .delGlow { filter: drop-shadow(0 0 4px rgba(255,120,120,0.8)); }
+
+    @keyframes dash-flow { to { stroke-dashoffset: -24; } }
+    .arrow-flow { animation: dash-flow 0.8s linear infinite; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="card">
+      <h2>Palette & Controls <span class="badge" id="current-badge">I = 0.000 A</span></h2>
+      <div class="content">
+        <div id="errorBox"></div>
+
+        <div class="row" id="buttons">
+          <button data-tool="PLACE_BAT">Battery</button>
+          <button data-tool="PLACE_RES">Resistor</button>
+          <button data-tool="PLACE_LED">LED</button>
+          <button data-tool="PLACE_SW">Switch</button>
+          <button data-tool="PLACE_CAP">Capacitor</button>
+          <button data-tool="PLACE_TRANSISTOR">Transistor</button>
+          <button data-tool="PLACE_FLASHER">Flasher IC</button>
+          <button data-tool="WIRE">Wire</button>
+          <button data-tool="PROBE">Probe</button>
+          <button data-tool="DELETE">Delete</button>
+          <button data-tool="SELECT">Select</button>
+        </div>
+
+        <div class="row file-ops" style="margin-top: 12px; border-top: 1px solid #2a313f; padding-top: 12px;">
+          <button id="saveBtn">Save Circuit</button>
+          <button id="loadBtn">Load Circuit</button>
+          <input type="file" id="fileInput" accept=".json" style="display: none;">
+        </div>
+
+        <div style="margin-top:8px">
+          <div>Battery voltage: <span id="vText">5.0</span> V</div>
+          <input id="vRange" type="range" min="1" max="12" step="0.5" value="5">
+        </div>
+
+        <div style="margin-top:8px">
+          <label><input type="checkbox" id="heatmapChk"> Show voltage heatmap</label>
+        </div>
+
+        <div class="legend">
+          <span style="background:#fca5a5"></span> + rail
+          <span style="background:#93c5fd"></span> − rail
+          <span></span> Node holes
+          <span class="flow"></span> Current direction
+        </div>
+
+        <div class="hint" id="hintBox">Tip: Use <b>Save Circuit</b> to download your layout. Use <b>Load Circuit</b> to open a saved file.</div>
+      </div>
+    </div>
+
+    <div class="card board-card">
+      <h2>Breadboard</h2>
+      <div class="content" style="height:calc(100% - 44px)">
+        <svg id="board" viewBox="0 0 900 600" preserveAspectRatio="xMidYMid meet" aria-label="Breadboard" xmlns="http://www.w3.org/2000/svg">
+          <g id="backdrop"></g>
+          <g id="holes"></g>
+          <g id="components"></g>
+          <g id="overlay"></g>
+        </svg>
+      </div>
+    </div>
+
+    <div class="card help" style="grid-column:1 / span 2">
+      <h2>Help & Tutorial</h2>
+      <div class="content">
+        <ol>
+          <li><b>Save Circuit:</b> Click to download a <code>.json</code> file of your current breadboard layout.</li>
+          <li><b>Load Circuit:</b> Click to open a file browser. Select a previously saved <code>.json</code> file to load it onto the breadboard.</li>
+          <li><b>Place Battery:</b> Click a hole for the Positive (+) terminal, then click a second hole for the Negative (−) terminal.</li>
+          <li>The <b>Transistor</b> acts as a switch. Click its body to toggle it ON/OFF.</li>
+          <li>The <b>Flasher IC</b> is a self-toggling switch. Click its label to set the flashing period.</li>
+          <li>Use <b>Delete</b> tool or <b>Shift+Click</b> any component to remove it.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      function showError(e){
+        var box = document.getElementById('errorBox');
+        box.style.display='block';
+        box.textContent = 'Error: ' + (e && e.message ? e.message : e);
+      }
+
+      try{
+        var COLS = 30, ROWS = 10, HOLE_SPACING = 18, GAP = 36, MARGIN = 60;
+        var RAIL_COLS = COLS;
+
+        var hintBox = document.getElementById('hintBox');
+
+        // FINAL LAYOUT FIX: Correctly calculates Y coordinates for both + and - rails.
+        function holeToXY(h){
+          var x0 = MARGIN, y0 = MARGIN;
+          var railOffsetY = 28;
+          var topBlockY = y0 + 100;
+          var botBlockY = topBlockY + (ROWS/2)*HOLE_SPACING + GAP;
+
+          var x = x0 + h.col*HOLE_SPACING;
+          var y = 0;
+
+          if (h.area === 'RAIL_TOP+') y = y0 + railOffsetY;
+          else if (h.area === 'RAIL_TOP-') y = y0 + railOffsetY + 20;
+          else if (h.area === 'RAIL_BOT+') y = botBlockY + (ROWS/2)*HOLE_SPACING + 48;
+          else if (h.area === 'RAIL_BOT-') y = botBlockY + (ROWS/2)*HOLE_SPACING + 48 + 20;
+          else if (h.area === 'TOP') y = topBlockY + h.row*HOLE_SPACING;
+          else y = botBlockY + h.row*HOLE_SPACING;
+
+          return {x:x,y:y};
+        }
+
+        function makeNodeId(area,row,col){
+          if (area.indexOf('RAIL_')===0){ return area+':c'+col; }
+          var group = Math.floor(col / 5);
+          return area+':r'+row+':g'+group;
+        }
+
+        function nodeForHole(h){ return makeNodeId(h.area, h.row, h.col); }
+        function uid(p){ p=p||'c'; return p + '_' + Math.random().toString(36).slice(2,9); }
+
+        function el(tag, attrs, children) {
+          attrs = attrs || {}; children = children || [];
+          var n = document.createElementNS('http://www.w3.org/2000/svg', tag);
+          for (var k in attrs) { if (attrs.hasOwnProperty(k)) n.setAttribute(k, attrs[k]); }
+          for (var i=0; i<children.length; i++) n.appendChild(children[i]);
+          return n;
+        }
+
+        var Tool = {
+          SELECT:'SELECT', WIRE:'WIRE', PROBE:'PROBE',
+          PLACE_BAT:'PLACE_BAT', PLACE_RES:'PLACE_RES', PLACE_LED:'PLACE_LED',
+          PLACE_SW:'PLACE_SW', PLACE_CAP:'PLACE_CAP', PLACE_FLASHER:'PLACE_FLASHER',
+          PLACE_TRANSISTOR:'PLACE_TRANSISTOR', DELETE:'DELETE'
+        };
+
+        var tool = Tool.SELECT;
+        var heatmapOn = false;
+        var batteryV = 5;
+
+        var components = [];
+        var pendingWireStart = null;
+        var placingBatteryFirst = null;
+        var lastT = null;
+        var animReq = null;
+
+        var buttonWrap = document.getElementById('buttons');
+        var buttons = buttonWrap ? buttonWrap.querySelectorAll('button[data-tool]') : [];
+
+        function markActiveButton(){
+          buttons.forEach(function(b){ b.classList.remove('active'); });
+          var currentToolBtn = Array.from(buttons).find(function(b){ return b.getAttribute('data-tool') === tool; });
+          if(currentToolBtn) currentToolBtn.classList.add('active');
+        }
+
+        buttons.forEach(function(b){
+          b.addEventListener('click', function(){
+            tool = b.getAttribute('data-tool');
+            markActiveButton();
+            placingBatteryFirst = null;
+            pendingWireStart = null;
+            render();
+          });
+        });
+
+        var vRange = document.getElementById('vRange');
+        var vText = document.getElementById('vText');
+        vRange.addEventListener('input', function(){
+          batteryV = parseFloat(vRange.value);
+          vText.textContent = batteryV.toFixed(1);
+          render();
+        });
+
+        var heatChk = document.getElementById('heatmapChk');
+        heatChk.addEventListener('change', function(){
+          heatmapOn = heatChk.checked;
+          render();
+        });
+
+        var currentBadge = document.getElementById('current-badge');
+
+        var saveBtn = document.getElementById('saveBtn');
+        var loadBtn = document.getElementById('loadBtn');
+        var fileInput = document.getElementById('fileInput');
+
+        function saveCircuit() {
+          try {
+            var circuitData = JSON.stringify(components, null, 2);
+            var blob = new Blob([circuitData], {type: "application/json"});
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'breadboard-circuit.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          } catch (err) {
+            showError(new Error("Failed to save circuit: " + err.message));
+          }
+        }
+
+        function loadCircuit(event) {
+          var file = event.target.files[0];
+          if (!file) return;
+
+          var reader = new FileReader();
+          reader.onload = function(e) {
+            try {
+              var loadedComponents = JSON.parse(e.target.result);
+              if (Array.isArray(loadedComponents)) {
+                components = loadedComponents;
+
+                var loadedBattery = components.find(function(c){ return c.type === 'BATTERY'; });
+                if (loadedBattery) {
+                  batteryV = loadedBattery.voltage;
+                  vRange.value = batteryV;
+                  vText.textContent = batteryV.toFixed(1);
+                }
+                render();
+              } else {
+                throw new Error("Invalid file format.");
+              }
+            } catch (err) {
+              showError(new Error("Failed to load circuit: " + err.message));
+            }
+          };
+          reader.onerror = function() {
+            showError(new Error("Failed to read the file."));
+          };
+          reader.readAsText(file);
+          fileInput.value = '';
+        }
+
+        saveBtn.addEventListener('click', saveCircuit);
+        loadBtn.addEventListener('click', function(){ fileInput.click(); });
+        fileInput.addEventListener('change', loadCircuit);
+
+        var holesG = document.getElementById('holes');
+        var compsG = document.getElementById('components');
+        var backdropG = document.getElementById('backdrop');
+        var overlayG = document.getElementById('overlay');
+
+        function drawBackdrop(){
+          backdropG.innerHTML = '';
+
+          var w = MARGIN*2 + (COLS-1)*HOLE_SPACING;
+          var y0 = MARGIN;
+          var railOffsetY = 28;
+          var topBlockY = y0 + 100;
+          var botBlockY = topBlockY + (ROWS/2)*HOLE_SPACING + GAP;
+          var bottomRailY = botBlockY + (ROWS/2)*HOLE_SPACING + 48;
+
+          function rect(x,y,wid,h,fill,opacity){
+            var r = el('rect', {x:x, y:y, width:wid, height:h, rx:8, fill:fill});
+            if (opacity!=null) r.setAttribute('opacity', String(opacity));
+            backdropG.appendChild(r);
+          }
+
+          // Rails background
+          rect(MARGIN-28, y0+railOffsetY-14, w-(MARGIN-28)+16, 28, 'var(--railPlus)', 0.10);
+          rect(MARGIN-28, y0+railOffsetY+14, w-(MARGIN-28)+16, 28, 'var(--railMinus)', 0.10);
+          rect(MARGIN-28, bottomRailY-14, w-(MARGIN-28)+16, 28, 'var(--railPlus)', 0.10);
+          rect(MARGIN-28, bottomRailY+14, w-(MARGIN-28)+16, 28, 'var(--railMinus)', 0.10);
+
+          // Separator bars
+          rect(MARGIN-28, topBlockY-26, w-(MARGIN-28)+16, 8, '#1f1f1f');
+          rect(MARGIN-28, botBlockY-8, w-(MARGIN-28)+16, 8, '#1f1f1f');
+
+          // Rail end + / − marks
+          var ends = [
+            {x:MARGIN-40, y:y0+railOffsetY, text:'+'},
+            {x:MARGIN-40, y:y0+railOffsetY+28, text:'−'},
+            {x:MARGIN + (COLS-1)*HOLE_SPACING + 20, y:y0+railOffsetY, text:'+'},
+            {x:MARGIN + (COLS-1)*HOLE_SPACING + 20, y:y0+railOffsetY+28, text:'−'},
+
+            {x:MARGIN-40, y:bottomRailY, text:'+'},
+            {x:MARGIN-40, y:bottomRailY+28, text:'−'},
+            {x:MARGIN + (COLS-1)*HOLE_SPACING + 20, y:bottomRailY, text:'+'},
+            {x:MARGIN + (COLS-1)*HOLE_SPACING + 20, y:bottomRailY+28, text:'−'}
+          ];
+          for (var i=0;i<ends.length;i++){
+            var t = el('text', {
+              'font-size':16,
+              'font-weight':'bold',
+              fill: (ends[i].text==='+') ? '#fca5a5' : '#93c5fd',
+              'text-anchor':'middle',
+              x:String(ends[i].x),
+              y:String(ends[i].y+4)
+            });
+            t.textContent = ends[i].text;
+            backdropG.appendChild(t);
+          }
+        }
+
+        var holes = [];
+        function allHoles(){
+          var arr=[];
+          for(var col=0; col<RAIL_COLS; col++){
+            arr.push({area:'RAIL_TOP+', row:0, col:col});
+            arr.push({area:'RAIL_TOP-', row:0, col:col});
+          }
+          for(var row=0; row<ROWS/2; row++){
+            for(var col=0; col<COLS; col++){
+              arr.push({area:'TOP', row:row, col:col});
+            }
+          }
+          for(var row2=0; row2<ROWS/2; row2++){
+            for(var col2=0; col2<COLS; col2++){
+              arr.push({area:'BOT', row:row2, col:col2});
+            }
+          }
+          for(var colb=0; colb<RAIL_COLS; colb++){
+            arr.push({area:'RAIL_BOT+', row:0, col:colb});
+            arr.push({area:'RAIL_BOT-', row:0, col:colb});
+          }
+          return arr;
+        }
+
+        function heatColor(t){
+          if (t<0) t=0; if (t>1) t=1;
+          var r = Math.round(239*t + 37*(1-t));
+          var g = Math.round(68*t + 99*(1-t));
+          var b = Math.round(68*t + 235*(1-t));
+          return 'rgb('+r+','+g+','+b+')';
+        }
+
+        function drawHoles(){
+          holesG.innerHTML = '';
+          holes = allHoles();
+          for (var i=0; i<holes.length; i++){
+            (function(h){
+              var p = holeToXY(h);
+              var c = el('circle', {cx:p.x, cy:p.y, r:4, fill:'#cbd5e1'});
+              c.addEventListener('mouseenter', function(){ drawHover(h); });
+              c.addEventListener('mouseleave', function(){ clearHover(); });
+              c.addEventListener('click', function(){ holeClicked(h); });
+              h._node = c;
+              holesG.appendChild(c);
+            })(holes[i]);
+          }
+        }
+
+        var hoverNode = null;
+        function drawHover(h){
+          clearHover();
+          var pos = holeToXY(h);
+          hoverNode = el('circle', {cx:pos.x, cy:pos.y, r:9, fill:'none', stroke:'#fff', 'stroke-dasharray':'2 3'});
+          overlayG.appendChild(hoverNode);
+        }
+        function clearHover(){
+          if (hoverNode && hoverNode.parentNode) hoverNode.parentNode.removeChild(hoverNode);
+          hoverNode=null;
+        }
+
+        function buildGraph() {
+          var nodes = {};
+          var edges = [];
+          var battery = null;
+
+          for (var idx=0; idx<components.length; idx++){
+            var c = components[idx];
+
+            if (c.type==='BATTERY') {
+              battery = c;
+            }
+            else if (c.type==='RESISTOR'){
+              var a = nodeForHole(c.a), b = nodeForHole(c.b);
+              nodes[a]=1; nodes[b]=1;
+              edges.push({from:a,to:b,id:c.id,kind:c.type,R:c.ohms,Vf:0});
+              edges.push({from:b,to:a,id:c.id,kind:c.type,R:c.ohms,Vf:0});
+            }
+            else if (c.type==='SWITCH' || c.type==='FLASHER' || c.type === 'TRANSISTOR'){
+              var r_on = 0.01, r_off = 1e12; var R_val;
+              if (c.type === 'TRANSISTOR') {
+                var a_t=nodeForHole(c.collector), b_t=nodeForHole(c.emitter);
+                nodes[a_t]=1; nodes[b_t]=1;
+                R_val = c.state ? r_on : r_off;
+                edges.push({from:a_t, to:b_t, id:c.id, kind:c.type, R:R_val, Vf:0});
+                edges.push({from:b_t, to:a_t, id:c.id, kind:c.type, R:R_val, Vf:0});
+              } else {
+                var a2=nodeForHole(c.a), b2=nodeForHole(c.b);
+                nodes[a2]=1; nodes[b2]=1;
+                var is_closed = (c.type==='SWITCH') ? c.closed : c.state;
+                R_val = is_closed ? r_on : r_off;
+                edges.push({from:a2,to:b2,id:c.id,kind:c.type,R:R_val,Vf:0});
+                edges.push({from:b2,to:a2,id:c.id,kind:c.type,R:R_val,Vf:0});
+              }
+            }
+            else if (c.type==='LED'){
+              var a3=nodeForHole(c.anode), b3=nodeForHole(c.cathode);
+              nodes[a3]=1; nodes[b3]=1;
+              edges.push({from:a3,to:b3,id:c.id,kind:c.type,R:c.seriesOhms,Vf:c.vf});
+              edges.push({from:b3,to:a3,id:c.id,kind:c.type,R:1e12,Vf:0});
+            }
+            else if (c.type==='CAP'){
+              var a4=nodeForHole(c.a), b4=nodeForHole(c.b);
+              nodes[a4]=1; nodes[b4]=1;
+              edges.push({from:a4,to:b4,id:c.id,kind:c.type,R:1e9,Vf:c.vc});
+              edges.push({from:b4,to:a4,id:c.id,kind:c.type,R:1e9,Vf:0});
+            }
+            else if (c.type==='WIRE'){
+              var a5=nodeForHole(c.a), b5=nodeForHole(c.b);
+              nodes[a5]=1; nodes[b5]=1;
+              edges.push({from:a5,to:b5,id:c.id,kind:c.type,R:0.02,Vf:0});
+              edges.push({from:b5,to:a5,id:c.id,kind:c.type,R:0.02,Vf:0});
+            }
+          }
+
+          function linkRail(area){
+            for (var col=0; col<RAIL_COLS-1; col++){
+              var n1 = makeNodeId(area, 0, col);
+              var n2 = makeNodeId(area, 0, col+1);
+              nodes[n1]=1; nodes[n2]=1;
+              edges.push({from:n1,to:n2,id:'rail_'+area+'_'+col,kind:'RAIL',R:0.005,Vf:0});
+              edges.push({from:n2,to:n1,id:'rail_'+area+'_'+(col+1),kind:'RAIL',R:0.005,Vf:0});
+            }
+          }
+          linkRail('RAIL_TOP+'); linkRail('RAIL_TOP-'); linkRail('RAIL_BOT+'); linkRail('RAIL_BOT-');
+
+          return {nodes:nodes, edges:edges, battery:battery};
+        }
+
+        function findSeriesPath(edges, start, goal){
+          var adj = {};
+          for (var i=0;i<edges.length;i++){
+            var e = edges[i];
+            if (!adj[e.from]) adj[e.from]=[];
+            adj[e.from].push(e);
+          }
+          var visited = {};
+          var path = [];
+
+          function dfs(node){
+            if (node===goal) return true;
+            visited[node]=1;
+            var opts = adj[node] || [];
+            if (opts.length > 8) return false; // keep simple
+
+            for (var j=0;j<opts.length;j++){
+              var e = opts[j];
+              if (e.R >= 1e11) continue; // "open" elements
+              if (visited[e.to]) continue;
+              path.push(e);
+              if (dfs(e.to)) return true;
+              path.pop();
+            }
+            return false;
+          }
+          return dfs(start) ? path.slice() : null;
+        }
+
+        function solveSeries(){
+          var built = buildGraph();
+          var battery = built.battery, edges = built.edges;
+          if (!battery) return {I:0, path:null, nodesV:{}};
+
+          var start = nodeForHole(battery.pos), goal = nodeForHole(battery.neg);
+          var path = findSeriesPath(edges, start, goal);
+          if (!path) return {I:0, path:null, nodesV:{}, start:start, goal:goal, edges:edges, battery:battery};
+
+          var R=0, Vf=0; var firstCap = null;
+          for (var i=0;i<path.length;i++){
+            var e = path[i];
+            if (['RESISTOR', 'WIRE', 'RAIL', 'SWITCH', 'FLASHER', 'TRANSISTOR'].indexOf(e.kind) > -1){
+              R += e.R;
+            } else if (e.kind==='LED'){
+              Vf += (e.Vf||0);
+            } else if (e.kind==='CAP'){
+              Vf += (e.Vf||0);
+              if (!firstCap){
+                for (var q=0;q<components.length;q++){
+                  if (components[q].id===e.id){ firstCap = components[q]; break; }
+                }
+              }
+            }
+          }
+
+          if (R < 1e-6) R = 1e-6;
+          var Vs = battery.voltage;
+          var I = (Vs - Vf) / R;
+          if (I < 0) I = 0;
+
+          var nodesV = {};
+          var v = Vs;
+          var fromNode = start;
+          nodesV[fromNode] = v;
+
+          for (var k=0;k<path.length;k++){
+            var e2 = path[k];
+            var drop = 0;
+            if (['RESISTOR', 'WIRE', 'RAIL', 'SWITCH', 'FLASHER', 'TRANSISTOR'].indexOf(e2.kind) > -1){
+              drop = I * e2.R;
+            } else if (e2.kind==='LED'){
+              drop = e2.Vf || 0;
+            } else if (e2.kind==='CAP'){
+              drop = e2.Vf || 0;
+            }
+            v = v - drop;
+            nodesV[e2.to] = v;
+          }
+
+          return {I:I, path:path, cap:firstCap, nodesV:nodesV, start:start, goal:goal, edges:edges, battery:battery};
+        }
+
+        function copyHole(h, dRow, dCol) { return { area: h.area, row: h.row + dRow, col: h.col + dCol }; }
+        function copyHoleWithCol(h, newCol){ return { area:h.area, row:h.row, col: newCol }; }
+        function sameHole(a,b){ return a && b && a.area===b.area && a.row===b.row && a.col===b.col; }
+
+        function deleteById(id){
+          var sel = compsG.querySelector('[data-id="'+id+'"]');
+          if (sel){
+            sel.style.transition='opacity 120ms ease';
+            sel.style.opacity='0.0';
+          }
+          setTimeout(function(){
+            components = components.filter(function(c){ return c.id !== id; });
+            render();
+          }, 130);
+        }
+
+        function holeClicked(h){
+          if (tool === Tool.PLACE_BAT){
+            if (!placingBatteryFirst){
+              placingBatteryFirst = h;
+              render();
+            } else {
+              if (nodeForHole(placingBatteryFirst) === nodeForHole(h)) {
+                showError(new Error('Battery terminals cannot be on the same node.'));
+                placingBatteryFirst = null;
+                render();
+                return;
+              }
+              var existing = components.find(function(c){ return c.type==='BATTERY'; });
+              var newBat = {
+                type:'BATTERY',
+                id: existing ? existing.id : uid('bat'),
+                voltage:batteryV,
+                pos:placingBatteryFirst,
+                neg:h,
+                label:'Battery'
+              };
+              components = components.filter(function(c){ return c.type !== 'BATTERY'; });
+              components.push(newBat);
+              placingBatteryFirst = null;
+              tool = Tool.SELECT;
+              markActiveButton();
+              render();
+            }
+            return;
+          }
+
+          if (tool === Tool.PLACE_RES){
+            components.push({type:'RESISTOR', id:uid('R'), ohms:330, a:h, b:copyHoleWithCol(h, h.col+5), label:'330Ω'});
+            render();
+            return;
+          }
+          if (tool === Tool.PLACE_LED){
+            components.push({type:'LED', id:uid('LED'), vf:2.0, seriesOhms:220, anode:h, cathode:copyHoleWithCol(h, h.col+5), label:'LED'});
+            render();
+            return;
+          }
+          if (tool === Tool.PLACE_SW){
+            components.push({type:'SWITCH', id:uid('SW'), closed:false, a:h, b:copyHoleWithCol(h, h.col+5), label:'SW'});
+            render();
+            return;
+          }
+          if (tool === Tool.PLACE_CAP){
+            components.push({type:'CAP', id:uid('C'), C:0.0001, a:h, b:copyHoleWithCol(h, h.col+5), vc:0, label:'100µF'});
+            render();
+            return;
+          }
+          if (tool === Tool.PLACE_FLASHER){
+            components.push({type:'FLASHER', id:uid('F'), period:1000, state:false, lastToggle:0, a:h, b:copyHoleWithCol(h, h.col+5), label:'Flasher (1000ms)'});
+            render();
+            return;
+          }
+          if (tool === Tool.PLACE_TRANSISTOR){
+            components.push({type:'TRANSISTOR', id:uid('T'), state:false, label:'Q1 2N3904', emitter:h, base:copyHole(h,0,1), collector:copyHole(h,0,2)});
+            render();
+            return;
+          }
+          if (tool === Tool.WIRE){
+            if (!pendingWireStart){
+              pendingWireStart = h;
+            } else {
+              if (!sameHole(pendingWireStart, h)){
+                components.push({type:'WIRE', id:uid('W'), a:pendingWireStart, b:h, label:'Wire'});
+              }
+              pendingWireStart = null;
+              render();
+            }
+            return;
+          }
+        }
+
+        function drawWire(a,b,highlight,id){
+          var p1 = holeToXY(a), p2 = holeToXY(b);
+          var midX = (p1.x + p2.x)/2;
+          var path = 'M '+p1.x+' '+p1.y+' C '+midX+' '+p1.y+', '+midX+' '+p2.y+', '+p2.x+' '+p2.y;
+          var w = el('path', {d:path, fill:'none', stroke: highlight? '#f59e0b':'#9ca3af', 'stroke-width': highlight? 4:3});
+          var g = el('g', {'data-id':id}, [w]);
+          var hit = el('path', {d:path, fill:'none', stroke:'#ff666600', 'stroke-opacity': (tool==='DELETE'? '0.35':'0.0'), 'stroke-width': 16, 'pointer-events':'stroke'});
+          g.appendChild(hit);
+          g.style.cursor='pointer';
+          g.addEventListener('click', function(ev){ if (tool==='DELETE' || (ev && ev.shiftKey)) deleteById(id); });
+          if (tool==='DELETE') g.classList.add('delGlow');
+          return {node:g, d:path};
+        }
+
+        function drawArrow(d){
+          return el('path', {d:d, fill:'none', stroke:'#fbbf24', 'stroke-width':5, 'stroke-dasharray':'8 16', 'class':'arrow-flow'});
+        }
+
+        function drawResistor(c, highlight){
+          var a=holeToXY(c.a), b=holeToXY(c.b), midX=(a.x+b.x)/2, midY=(a.y+b.y)/2;
+          var line = el('line', {x1:a.x, y1:a.y, x2:b.x, y2:b.y, stroke: highlight? '#f59e0b':'#e5e7eb', 'stroke-width': highlight?4:3});
+          var body = el('rect', {x:midX-14, y:midY-6, width:28, height:12, rx:2, fill:'#eab308', stroke:'#111'});
+          var text = el('text', {x:midX, y:midY-10, 'text-anchor':'middle', 'font-size':10, fill:'#fff', 'pointer-events':'none'});
+          text.textContent = c.label || (c.ohms+'Ω');
+          var g = el('g', {'data-id':c.id});
+          g.appendChild(line); g.appendChild(body); g.appendChild(text);
+          g.style.cursor='pointer';
+          g.addEventListener('click', function(ev){
+            if (tool==='DELETE' || (ev && ev.shiftKey)) { deleteById(c.id); return; }
+            var val = prompt('Resistor value (ohms)', String(c.ohms));
+            if (val){
+              var n = Number(val);
+              if (!isNaN(n) && n>0){ c.ohms=n; c.label=n+'Ω'; render(); }
+            }
+          });
+          if (tool==='DELETE') g.classList.add('delGlow');
+          return [g];
+        }
+
+        function drawTransistor(c, highlight){
+          var pE=holeToXY(c.emitter), pB=holeToXY(c.base), pC=holeToXY(c.collector);
+          var midX=(pE.x+pC.x)/2, midY=(pE.y+pC.y)/2;
+
+          var bodyPath = 'M '+pE.x+' '+(pE.y+15)+' A 18 18 0 0 1 '+pC.x+' '+(pC.y+15)+' L '+pC.x+' '+pC.y+' L '+pE.x+' '+pE.y+' Z';
+          var body = el('path', { d: bodyPath, fill: c.state ? '#4ade80' : '#27272a', stroke: '#111' });
+
+          var legE = el('line', {x1:pE.x, y1:pE.y, x2:pE.x, y2:pE.y+15, stroke:highlight?'#f59e0b':'#e5e7eb', 'stroke-width':3});
+          var legB = el('line', {x1:pB.x, y1:pB.y, x2:pB.x, y2:pB.y+15, stroke:'#e5e7eb', 'stroke-width':3});
+          var legC = el('line', {x1:pC.x, y1:pC.y, x2:pC.x, y2:pC.y+15, stroke:highlight?'#f59e0b':'#e5e7eb', 'stroke-width':3});
+
+          var text = el('text', {x:midX, y:midY-10, 'text-anchor':'middle', 'font-size':10, fill:'#fff', 'pointer-events':'none'});
+          text.textContent = c.label;
+
+          var textState = el('text', {x:midX, y:midY-22, 'text-anchor':'middle', 'font-size':9, fill:'#ccc', 'pointer-events':'none'});
+          textState.textContent = c.state ? 'ON' : 'OFF';
+
+          var textPins = el('text', {x:midX, y:midY+32, 'text-anchor':'middle', 'font-size':8, fill:'#888', 'pointer-events':'none'});
+          textPins.textContent = 'E  B  C';
+
+          var g = el('g', {'data-id':c.id}, [legE, legB, legC, body, text, textState, textPins]);
+          g.style.cursor='pointer';
+          g.addEventListener('click', function(ev){
+            if (tool==='DELETE' || (ev && ev.shiftKey)) { deleteById(c.id); return; }
+            c.state = !c.state; render();
+          });
+          if (tool==='DELETE') g.classList.add('delGlow');
+          return [g];
+        }
+
+        function drawLED(c, intensity, highlight){
+          var a=holeToXY(c.anode), b=holeToXY(c.cathode), midX=(a.x+b.x)/2, midY=(a.y+b.y)/2;
+          var line = el('line', {x1:a.x, y1:a.y, x2:b.x, y2:b.y, stroke: highlight? '#f59e0b':'#e5e7eb', 'stroke-width': highlight?4:3});
+          var tri = el('polygon', {points:(midX-10)+','+(midY+8)+' '+(midX-10)+','+(midY-8)+' '+(midX+2)+','+midY, fill:'#ef4444'});
+          var bar = el('line', {x1:midX+6, y1:midY-10, x2:midX+6, y2:midY+10, stroke:'#ef4444', 'stroke-width':2});
+
+          function glowCircle(r,op){ return el('circle',{cx:midX, cy:midY, r:String(r), fill:'#ef4444', opacity:String(op)}) }
+          var alpha = Math.max(0, Math.min(1, intensity));
+          var g1 = glowCircle(22, 0.25*alpha), g2=glowCircle(13, 0.35*alpha), g3=glowCircle(7, 0.45*alpha);
+
+          var labelText = c.label || 'LED';
+          var txt = el('text', {x:midX, y:midY-12, 'text-anchor':'middle', 'font-size':10, fill:'#fff'});
+          txt.textContent = labelText;
+          txt.style.cursor='pointer';
+          txt.addEventListener('click', function(ev){
+            if (tool==='DELETE' || (ev && ev.shiftKey)) { deleteById(c.id); return; }
+            var def = (Number(c.vf||2).toFixed(2)+', '+(c.seriesOhms||0));
+            var raw = prompt('Edit LED (enter "vf, seriesOhms")', def);
+            if (!raw) return;
+            var parts = raw.split(/[, ]+/).filter(Boolean);
+            var vf = parseFloat(parts[0]);
+            var rs = parts.length>1 ? parseFloat(parts[1]) : c.seriesOhms;
+            if (isNaN(vf) || vf < 0) { alert('Invalid Vf'); return; }
+            if (isNaN(rs) || rs < 0) { alert('Invalid series R'); return; }
+            c.vf = vf; c.seriesOhms = rs; c.label = 'LED';
+            render();
+          });
+
+          var g = el('g', {'data-id':c.id}, [line, tri, bar, g1, g2, g3, txt]);
+          g.style.cursor='pointer';
+          g.addEventListener('click', function(ev){ if (tool==='DELETE' || (ev && ev.shiftKey)) deleteById(c.id); });
+          if (tool==='DELETE') g.classList.add('delGlow');
+          return [g];
+        }
+
+        function drawSwitch(c, highlight){
+          var a=holeToXY(c.a), b=holeToXY(c.b), midX=(a.x+b.x)/2, midY=(a.y+b.y)/2, gap=10;
+          var left = el('line', {x1:a.x, y1:a.y, x2:midX-gap, y2:midY, stroke: highlight? '#f59e0b':'#e5e7eb', 'stroke-width': highlight?4:3});
+          var right= el('line', {x1:midX+gap, y1:midY, x2:b.x, y2:b.y, stroke: highlight? '#f59e0b':'#e5e7eb', 'stroke-width': highlight?4:3});
+          var bar = el('line', c.closed
+            ? {x1:midX-gap, y1:midY, x2:midX+gap, y2:midY, stroke:'#22c55e', 'stroke-width':3}
+            : {x1:midX-gap, y1:midY-6, x2:midX+gap, y2:midY+6, stroke:'#ef4444', 'stroke-width':3});
+          var txt = el('text', {x:midX, y:midY-10, 'text-anchor':'middle', 'font-size':10, fill:'#fff'});
+          txt.textContent = c.closed ? 'Closed' : 'Open';
+          var grp = el('g', {'data-id':c.id}, [left,right,bar,txt]);
+          grp.style.cursor='pointer';
+          grp.addEventListener('click', function(ev){
+            if (tool==='DELETE' || (ev && ev.shiftKey)) { deleteById(c.id); return; }
+            c.closed=!c.closed; render();
+          });
+          if (tool==='DELETE') grp.classList.add('delGlow');
+          return [grp];
+        }
+
+        function drawFlasher(c, highlight){
+          var a=holeToXY(c.a), b=holeToXY(c.b), midX=(a.x+b.x)/2, midY=(a.y+b.y)/2;
+          var line = el('line', {x1:a.x, y1:a.y, x2:b.x, y2:b.y, stroke: highlight ? '#f59e0b':'#e5e7eb', 'stroke-width': highlight?4:3});
+          var body = el('rect', {x:midX-20, y:midY-8, width:40, height:16, rx:2, fill: c.state ? '#4ade80' : '#27272a', stroke:'#111', 'stroke-width':1.5});
+          var text = el('text', {x:midX, y:midY-12, 'text-anchor':'middle', 'font-size':10, fill:'#fff'});
+          text.textContent = c.label || ('Flasher ('+c.period+'ms)');
+          text.style.cursor='pointer';
+          text.addEventListener('click', function(ev){
+            if (ev && ev.shiftKey){ deleteById(c.id); return; }
+            var val = prompt('Flasher period (ms)', String(c.period));
+            if (val){
+              var n = Number(val);
+              if (!isNaN(n) && n>0){
+                c.period=n; c.label='Flasher ('+n+'ms)'; c.lastToggle=0; render();
+              }
+            }
+          });
+          var g = el('g', {'data-id':c.id}, [line, body, text]);
+          g.style.cursor='pointer';
+          g.addEventListener('click', function(ev){ if (tool==='DELETE' || (ev && ev.shiftKey)) deleteById(c.id); });
+          if (tool==='DELETE') g.classList.add('delGlow');
+          return [g];
+        }
+
+        function drawCapacitor(c, highlight){
+          var a=holeToXY(c.a), b=holeToXY(c.b), midX=(a.x+b.x)/2, midY=(a.y+b.y)/2;
+          var plateGap = 10;
+          var left = el('line', {x1:midX-plateGap, y1:midY-12, x2:midX-plateGap, y2:midY+12, stroke:'#93c5fd', 'stroke-width':3});
+          var right= el('line', {x1:midX+plateGap, y1:midY-12, x2:midX+plateGap, y2:midY+12, stroke:'#93c5fd', 'stroke-width':3});
+          var leads = el('line', {x1:a.x, y1:a.y, x2:b.x, y2:b.y, stroke: highlight? '#f59e0b':'#e5e7eb', 'stroke-width': highlight?4:3});
+
+          var alpha = Math.max(0, Math.min(1, c.vc / Math.max(batteryV, 0.01)));
+          var fill = el('rect', {x:midX-plateGap+1.5, y:midY-10, width:(plateGap*2-3), height:20, fill:'#60a5fa', opacity:String(0.25*alpha)});
+
+          var txt = el('text', {x:midX, y:midY-16, 'text-anchor':'middle', 'font-size':10, fill:'#cfe8ff'});
+          txt.textContent = c.label || 'Cap';
+
+          var g = el('g', {'data-id':c.id}, [leads, left, right, fill, txt]);
+          g.style.cursor='pointer';
+          g.addEventListener('click', function(ev){ if (tool==='DELETE' || (ev && ev.shiftKey)) deleteById(c.id); });
+          if (tool==='DELETE') g.classList.add('delGlow');
+          return [g];
+        }
+
+        function drawBattery(c){
+          var a=holeToXY(c.pos), b=holeToXY(c.neg), midX=(a.x+b.x)/2, midY=(a.y+b.y)/2;
+          var line = el('line', {x1:a.x, y1:a.y, x2:b.x, y2:b.y, stroke:'#60a5fa', 'stroke-width':4});
+          var txt = el('text', {x:midX, y:midY-10, 'text-anchor':'middle', 'font-size':10, fill:'#93c5fd'});
+          txt.textContent = (c.label || 'Battery') + ' ' + c.voltage + 'V';
+          var g = el('g', {'data-id':c.id}, [line, txt]);
+          g.style.cursor='pointer';
+          g.addEventListener('click', function(ev){ if (tool==='DELETE' || (ev && ev.shiftKey)) deleteById(c.id); });
+          if (tool==='DELETE') g.classList.add('delGlow');
+          return [g];
+        }
+
+        function render(){
+          overlayG.innerHTML = '';
+          compsG.innerHTML = '';
+
+          if(placingBatteryFirst) {
+            var pos = holeToXY(placingBatteryFirst);
+            var plus = el('text', {x:pos.x, y:pos.y+5, 'font-size':16, fill: '#fca5a5', 'text-anchor':'middle', 'font-weight':'bold', 'pointer-events':'none'});
+            plus.textContent = '+';
+            overlayG.appendChild(plus);
+          }
+
+          var batt = components.find(function(c){ return c.type === 'BATTERY'; });
+          if (batt) batt.voltage = batteryV;
+
+          var solved = solveSeries();
+          var I = solved.I, path = solved.path, nodesV = solved.nodesV || {};
+          currentBadge.textContent = 'I = ' + I.toFixed(3) + ' A';
+
+          var warnBox = document.getElementById('errorBox');
+          warnBox.style.display = I > 0.03 ? 'block' : 'none';
+          if(I > 0.03) warnBox.textContent = 'Warning: Current > 30 mA. Real components could be damaged.';
+
+          var onPath = {};
+          if (path){ for (var j=0;j<path.length;j++){ onPath[path[j].id]=1; } }
+
+          for (var k=0;k<components.length;k++){
+            var c = components[k];
+            var nodes=[], extra=null;
+
+            if (c.type==='WIRE'){
+              var wRes = drawWire(c.a, c.b, !!onPath[c.id], c.id);
+              nodes.push(wRes.node);
+              if (onPath[c.id] && I>1e-4) extra = drawArrow(wRes.d);
+            }
+            else if (c.type==='RESISTOR'){ nodes = drawResistor(c, !!onPath[c.id]); }
+            else if (c.type==='LED'){
+              var lit = !!onPath[c.id] && I > 1e-4;
+              var intensity = lit ? Math.min(I/0.02, 1) : 0;
+              nodes = drawLED(c, intensity, lit);
+            }
+            else if (c.type==='SWITCH'){ nodes = drawSwitch(c, !!onPath[c.id]); }
+            else if (c.type==='CAP'){ nodes = drawCapacitor(c, !!onPath[c.id]); }
+            else if (c.type==='FLASHER'){ nodes = drawFlasher(c, !!onPath[c.id]); }
+            else if (c.type==='TRANSISTOR'){ nodes = drawTransistor(c, !!onPath[c.id]); }
+            else if (c.type==='BATTERY'){ nodes = drawBattery(c); }
+
+            var g = el('g');
+            for (var n=0;n<nodes.length;n++){ g.appendChild(nodes[n]); }
+            compsG.appendChild(g);
+            if (extra) overlayG.appendChild(extra);
+          }
+
+          for (var h=0; h<holes.length; h++){
+            var hh = holes[h];
+            if (!hh._node) continue;
+            if (heatmapOn && nodesV[nodeForHole(hh)]!=null){
+              var v = nodesV[nodeForHole(hh)];
+              var t = batteryV>0 ? (v / batteryV) : 0;
+              hh._node.setAttribute('fill', heatColor(t));
+            } else {
+              hh._node.setAttribute('fill', '#cbd5e1');
+            }
+          }
+
+          updateHint();
+
+          var hasDynamicComponents = components.some(function(c){ return c.type === 'CAP' || c.type === 'FLASHER'; });
+          if (hasDynamicComponents && !animReq) {
+            lastT = null;
+            animReq = requestAnimationFrame(step);
+          } else if (!hasDynamicComponents && animReq) {
+            cancelAnimationFrame(animReq);
+            animReq = null;
+          }
+        }
+
+        function updateHint() {
+          if(tool === Tool.PLACE_BAT) {
+            hintBox.innerHTML = placingBatteryFirst
+              ? 'Click a hole for the <b>Negative (−)</b> terminal.'
+              : 'Click a hole for the <b>Positive (+)</b> terminal.';
+          } else {
+            hintBox.innerHTML = 'Tip: Use <b>Save Circuit</b> to download your layout. Use <b>Load Circuit</b> to open a saved file.';
+          }
+        }
+
+        function step(ts){
+          if (animReq === null) return;
+          if (lastT==null) lastT = ts;
+          var dt = (ts - lastT) / 1000.0; if (dt > 0.05) dt = 0.05; lastT = ts;
+
+          var needsRender = false;
+
+          for(var i=0; i<components.length; i++) {
+            var c = components[i];
+            if (c.type === 'FLASHER') {
+              if(!c.lastToggle) c.lastToggle = ts;
+              var halfPeriod = (c.period || 1000) / 2;
+              if (ts - c.lastToggle > halfPeriod) { c.state = !c.state; c.lastToggle = ts; needsRender = true; }
+            }
+          }
+
+          var solved = solveSeries();
+          var cap = solved.cap;
+          if (cap){
+            var I = solved.I;
+            var dV = (I / Math.max(cap.C,1e-9)) * dt;
+            var newVc = cap.vc + dV;
+            if (newVc < 0) newVc = 0;
+            if (newVc > batteryV*1.5) newVc = batteryV*1.5;
+            if (Math.abs(cap.vc - newVc) > 1e-4) { cap.vc = newVc; needsRender = true; }
+          }
+
+          if(needsRender){ render(); }
+          animReq = requestAnimationFrame(step);
+        }
+
+        // Initial battery (example)
+        components.push({ type:'BATTERY', id:uid('bat'), voltage:batteryV, pos:{area:'RAIL_TOP+', row:0, col:3}, neg:{area:'RAIL_TOP-', row:0, col:10}, label:'Battery' });
+
+        drawBackdrop();
+        drawHoles();
+        render();
+      } catch(e){
+        showError(e);
+        console.error(e);
+      }
+    })();
+  </script>
+</body>
+</html>
